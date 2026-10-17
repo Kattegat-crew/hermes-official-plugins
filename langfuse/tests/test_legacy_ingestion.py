@@ -155,3 +155,146 @@ def test_concurrent_end_calls_emit_one_observation_update():
     client.flush()
     _wait_for_batches(api, 1)
     assert sum(event["type"] == "generation-update" for event in _events(api)) == 1
+
+
+def test_finished_legacy_trace_is_delivered_without_flushing_default_client(monkeypatch):
+    plugin = importlib.import_module("langfuse_plugin")
+    legacy = _legacy_module()
+    api = _API()
+    client = legacy.LegacyIngestionClient(api)
+    trace_id = client.create_trace_id(seed="finish")
+    root = client.start_observation(trace_context={"trace_id": trace_id}, name="Hermes turn",
+                                    as_type="chain", metadata={})
+    plugin._TRACE_STATE["legacy-finish-test"] = plugin.TraceState(trace_id, root)
+    monkeypatch.setattr(plugin, "_get_langfuse", lambda: client)
+
+    plugin._finish_trace("legacy-finish-test")
+    _wait_for_batches(api, 1)
+    assert api.ingestion.batches
+    assert "legacy-finish-test" not in plugin._TRACE_STATE
+
+    class ModernClient:
+        flushes = 0
+
+        def flush(self):
+            self.flushes += 1
+
+    modern = ModernClient()
+    modern_root = type("Root", (), {"end": lambda self: None, "set_trace_io": lambda self, **kw: None,
+                                    "update": lambda self, **kw: None})()
+    plugin._TRACE_STATE["modern-finish-test"] = plugin.TraceState("modern", modern_root)
+    monkeypatch.setattr(plugin, "_get_langfuse", lambda: modern)
+    plugin._finish_trace("modern-finish-test")
+    assert modern.flushes == 0
+
+
+def test_blocked_transport_does_not_hold_finish_or_producer_lock(monkeypatch):
+    plugin = importlib.import_module("langfuse_plugin")
+    legacy = _legacy_module()
+    entered = threading.Event()
+    release = threading.Event()
+    in_flight = 0
+    max_in_flight = 0
+    state_lock = threading.Lock()
+
+    class BlockingIngestion:
+        def batch(self, *, batch, request_options=None):
+            nonlocal in_flight, max_in_flight
+            with state_lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            entered.set()
+            try:
+                assert release.wait(2.0), "test did not release mocked transport"
+                return type("Response", (), {"errors": []})()
+            finally:
+                with state_lock:
+                    in_flight -= 1
+
+    client = legacy.LegacyIngestionClient(type("API", (), {"ingestion": BlockingIngestion()})())
+    monkeypatch.setattr(plugin, "_get_langfuse", lambda: client)
+    finished = []
+    try:
+        for index in range(2):
+            task_key = f"blocked-finish-{index}"
+            trace_id = client.create_trace_id(seed=task_key)
+            root = client.start_observation(trace_context={"trace_id": trace_id},
+                                            name="Hermes turn", as_type="chain", metadata={})
+            plugin._TRACE_STATE[task_key] = plugin.TraceState(trace_id, root)
+            started = time.monotonic()
+            plugin._finish_trace(task_key)
+            finished.append(time.monotonic() - started)
+            if index == 0:
+                assert entered.wait(1.0), "worker did not reach blocked transport"
+        assert max(finished) < 0.5, f"finish blocked behind transport: {finished}"
+        assert max_in_flight == 1
+    finally:
+        release.set()
+    client.flush()
+    deadline = time.monotonic() + 2.0
+    while client._pending_events:
+        assert time.monotonic() < deadline, "worker did not drain after release"
+        time.sleep(0.001)
+
+
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(None, "otlp"), ("otlp", "otlp"), ("legacy", "legacy")])
+def test_transport_mode_is_explicit_opt_in(monkeypatch, configured, expected):
+    plugin = importlib.import_module("langfuse_plugin")
+    if configured is None:
+        monkeypatch.delenv("HERMES_LANGFUSE_TRANSPORT", raising=False)
+    else:
+        monkeypatch.setenv("HERMES_LANGFUSE_TRANSPORT", configured)
+    assert plugin._transport_mode() == expected
+
+
+def test_invalid_transport_mode_fails_closed(monkeypatch, caplog):
+    plugin = importlib.import_module("langfuse_plugin")
+    monkeypatch.setenv("HERMES_LANGFUSE_TRANSPORT", "https://secret.example/token")
+    with caplog.at_level("WARNING", logger=plugin.__name__):
+        assert plugin._transport_mode() == "invalid"
+    assert "secret.example" not in caplog.text
+
+
+def test_legacy_mode_uses_only_low_level_api_constructor(monkeypatch):
+    plugin = importlib.import_module("langfuse_plugin")
+    monkeypatch.setenv("HERMES_LANGFUSE_TRANSPORT", "legacy")
+    monkeypatch.setattr(plugin, "_secret", lambda name: {
+        "HERMES_LANGFUSE_PUBLIC_KEY": "pk-lf-1234567890abcdef",
+        "HERMES_LANGFUSE_SECRET_KEY": "sk-lf-1234567890abcdef",
+    }.get(name, ""))
+    api_sentinel = object()
+    calls = []
+
+    class Wrapper:
+        def __init__(self, api):
+            calls.append(("wrapper", api))
+
+    monkeypatch.setattr(plugin, "create_langfuse_api_client", lambda **kwargs: calls.append(("api", kwargs)) or api_sentinel)
+    monkeypatch.setattr(plugin, "LegacyIngestionClient", Wrapper)
+    monkeypatch.setattr(plugin, "Langfuse", lambda **kwargs: calls.append(("otlp", kwargs)))
+
+    plugin._LANGFUSE_CLIENT = None
+    plugin._LANGFUSE_CLIENT_BY_HOME.clear()
+    assert isinstance(plugin._build_client(), Wrapper)
+    assert calls[0][0] == "api"
+    assert calls[0][1]["base_url"] == "https://cloud.langfuse.com"
+    assert calls[1] == ("wrapper", api_sentinel)
+    assert all(kind != "otlp" for kind, _ in calls)
+
+
+def test_metadata_only_mode_does_not_log_unused_capture_configuration(monkeypatch, caplog):
+    plugin = importlib.import_module("langfuse_plugin")
+    legacy = _legacy_module()
+    monkeypatch.setenv("HERMES_LANGFUSE_TRANSPORT", "legacy")
+    monkeypatch.setenv("HERMES_LANGFUSE_CAPTURE", "sk-lf-secret-value")
+    client = legacy.LegacyIngestionClient(_API())
+    with caplog.at_level("WARNING", logger=plugin.__name__):
+        assert plugin._capture_content("private prompt") is None
+        plugin._start_root_trace(
+            "task:opaque", task_id="task", session_id="session", platform="telegram",
+            provider="openai", model="gpt-4.1", api_mode="chat",
+            messages=[{"role": "user", "content": "private prompt"}], client=client,
+        )
+    assert "sk-lf-secret-value" not in caplog.text

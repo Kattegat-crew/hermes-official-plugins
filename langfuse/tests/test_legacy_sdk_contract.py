@@ -240,3 +240,82 @@ def run_sdk4_split_batch_order_contract() -> None:
         ["generation-create", "generation-update", "span-update"],
     ]
     assert len({event["id"] for batch in batches for event in batch}) == 5
+
+
+def run_blocked_sdk_transport_does_not_block_finish() -> None:
+    """A stuck response body cannot hold plugin finish or create extra workers."""
+    import httpx
+
+    plugin_path = Path(__file__).resolve().parents[1] / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        "langfuse_plugin", plugin_path,
+        submodule_search_locations=[str(plugin_path.parent)],
+    )
+    assert spec is not None and spec.loader is not None
+    plugin = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = plugin
+    spec.loader.exec_module(plugin)
+    adapter = sys.modules[plugin.LegacyIngestionClient.__module__]
+
+    entered, release = threading.Event(), threading.Event()
+    in_flight = 0
+    max_in_flight = 0
+    lock = threading.Lock()
+
+    def blocked(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, max_in_flight
+        with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        entered.set()
+        try:
+            assert release.wait(2.0), "test did not release mocked HTTP response"
+            return httpx.Response(200, json={"successes": [], "errors": []}, request=request)
+        finally:
+            with lock:
+                in_flight -= 1
+
+    http = httpx.Client(transport=httpx.MockTransport(blocked), timeout=1.5)
+    api = plugin.create_langfuse_api_client(
+        base_url="https://langfuse.invalid", public_key="pk-lf-test-only",
+        secret_key="sk-lf-test-only", httpx_client=http,
+    )
+    client = plugin.LegacyIngestionClient(api)
+    durations = []
+    try:
+        with patch.object(plugin, "_get_langfuse", return_value=client):
+            for index in range(2):
+                task_key = f"blocked-sdk-finish-{index}"
+                trace_id = client.create_trace_id(seed=task_key)
+                root = client.start_observation(
+                    trace_context={"trace_id": trace_id}, name="Hermes turn",
+                    as_type="chain", metadata={},
+                )
+                plugin._TRACE_STATE[task_key] = plugin.TraceState(trace_id, root)
+                started = time.monotonic()
+                plugin._finish_trace(task_key)
+                durations.append(time.monotonic() - started)
+                if index == 0:
+                    assert entered.wait(1.0), "worker did not reach mocked HTTP transport"
+        assert max(durations) < 0.5, f"finish blocked behind HTTP: {durations}"
+        assert max_in_flight == 1, f"created concurrent delivery workers: {max_in_flight}"
+    finally:
+        release.set()
+        try:
+            client.flush()
+            wait_for_delivery(adapter, client)
+        finally:
+            http.close()
+
+
+def test_serialized_sdk4_payload_uses_only_langfuse_v2_fields():
+    run_sdk4_v2_wire_contract()
+
+
+if __name__ == "__main__":
+    run_sdk4_v2_wire_contract()
+    test_low_level_sdk_client_has_bounded_timeout_and_disables_redirects()
+    run_sdk4_retry_budget_contract()
+    run_sdk4_split_batch_order_contract()
+    run_blocked_sdk_transport_does_not_block_finish()
+    print("SDK4 serializer, retry, split-batch, and blocked-transport contracts passed")
