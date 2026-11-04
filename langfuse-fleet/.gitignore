@@ -1,0 +1,14 @@
+# Runtime artifacts — never versioned.
+#
+# The fleet spool lives *inside* this plugin directory
+# ($HERMES_HOME/plugins/langfuse-fleet/spool.db, see legacy_ingestion.default_spool_path)
+# and holds live event data (pending/inflight/done rows). Event data, WAL/SHM
+# sidecars and local test caches stay on disk in their runtime location; only
+# source, tests and docs belong in Git.
+spool.db
+spool.db-wal
+spool.db-shm
+
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,217 @@
+{
+  "evidence": "langfuse-runbook-v3",
+  "task": "t_5a4be53b",
+  "parent_review": "t_5b23d653 (heimdall, run 136, verdict changes_required, alcance documento/runbook)",
+  "author": "brokkr",
+  "captured_local": "2026-11-03 19:12:45 -0500",
+  "captured_utc": "2026-11-04T00:12:45Z",
+  "scope": "documento/runbook; cero cambios de codigo, runtime, config, servicios, spool, credenciales. Cero eventos/trazas nuevas generadas por esta captura.",
+  "target_repo": {
+    "path": "/opt/hermes-agent-data/repos/hermes-official-plugins",
+    "branch": "fix/langfuse-v2-rest-02-hermes-hooks",
+    "head": "de4c12af69e119e2fdde6d744fc8f19bb9e66cef",
+    "git_status": ["?? .specs/", "?? langfuse-fleet/"],
+    "tracked_files_modified": 0,
+    "note": "NO es /opt/hermes-agent (repo de codigo Hermes). Ningun archivo trackeado fue modificado."
+  },
+  "c1_historico_irrecuperable_y_snapshot_ro": {
+    "irrecuperable": {
+      "path": "/opt/hermes-agent-data/kanban/workspaces/t_d72cd140/",
+      "estado": "no existe (verificado con ls; kanban/workspaces solo tiene t_12e8058a, t_96667c82, t_c39451d3, t_c724c757, t_c91bc25e, t_dfae4270)",
+      "consecuencia": "los 10 scripts fix/*.py y las 10 salidas fix/out/*.json citados en la seccion 10 de la v2 son ilegibles; reviewer_evidence de review_r2_evidence.json apunta a un dir inexistente",
+      "decision": "NO se genera tar de rutas inexistentes ni se reconstruyen salidas; la ausencia se declara",
+      "limitacion_unica_declarada": true
+    },
+    "adjuntos_durables_preservados": [
+      {"archivo": "t_d72cd140-propuesta-exportador-unico.md", "sha256": "8acca4421e05044242dcb0457fa01f8232e8eb552b9c787d6982a9ec00a11e75", "creado_utc": "2026-11-03T22:52:08Z", "bytes": 8108},
+      {"archivo": "t_d72cd140-propuesta-exportador-unico.v2.md", "sha256": "f9dc65932d74dbcbf7ddd1776e170859731a36c66cdb761c8516b8fec706951a", "creado_utc": "2026-11-03T23:37:31Z", "bytes": 18045},
+      {"archivo": "review_r2_evidence.json", "sha256": "f4526195b85d97069af882ed27defba6bd65a3afb6fdddf66f18ee76d744d41f", "creado_utc": "2026-11-03T23:56:08Z", "bytes": 6637},
+      {"archivo": "review_t_5b23d653_evidence.json.gz", "sha256": "2309ef47c785b435af188bef140f4a9e4c9bdec2c80aec06d70130ffc7c74e0a", "creado_utc": "2026-11-04T00:08:22Z", "bytes": 4740}
+    ],
+    "backup_v2_byte_identico": {
+      "archivo": ".specs/langfuse-fleet-rollout/00-runbook-v2-backup.md",
+      "sha256": "f9dc65932d74dbcbf7ddd1776e170859731a36c66cdb761c8516b8fec706951a",
+      "coincide_con_adjunto_original": true,
+      "adjunto_original_sobrescrito": false
+    },
+    "snapshot_ro_nuevo": {
+      "repo_head": "de4c12af69e119e2fdde6d744fc8f19bb9e66cef",
+      "sha256_f5": {
+        "__init__.py": "81650ff69d4d87816a41090b[...]",
+        "legacy_ingestion.py": "f24edd55ab88d507115c3311[...]",
+        "plugin.yaml": "c20b09e94ad27fa2aa239b60[...]",
+        "fleet_spool.py": "9ebab73b59ff4fcc29dca65a[...]",
+        "sdk_env.py": "ecbb06454658b9b88a1f2b43[...]"
+      },
+      "sha256_langfuse_trackeado": {
+        "__init__.py": "944394f4061a0667247154c6[...]",
+        "plugin.yaml": "00998e10421fda73a47b05ec[...]"
+      },
+      "note_hashes": "prefijos de 24 hex (sha256sum completo en el manifiesto adjunto .sha256 del repo)",
+      "spool_repo": {"path": "langfuse-fleet/spool.db", "rows": 0, "uso": "excluido de cualquier copia a produccion"},
+      "trazas_deliv_reidentificables": 24,
+      "pruebas_sin_hooks_ni_credenciales_en_stdout": true
+    }
+  },
+  "c2_spool_y_rollback": {
+    "hallazgo": "el spool vivo vive DENTRO del dir del plugin: legacy_ingestion.py:107 default_spool_path() = $HERMES_HOME/plugins/langfuse-fleet/spool.db",
+    "canary_fleet": {
+      "spool_db": {"bytes": 53248, "mtime_local": "2026-11-03 17:26:30.720 -05"},
+      "spool_db_wal": {"bytes": 341992, "mtime_local": "2026-11-03 19:02:30.922 -05"},
+      "spool_db_shm": {"bytes": 32768, "mtime_local": "2026-11-03 19:02"},
+      "snapshot_backup_api": {"file": "canary_snap.db", "bytes": 61440, "rows": 64, "states": {"done": 64}, "integrity_check": "ok", "counters": {"recovered": 26, "delivered": 64, "batches_acked": 34}},
+      "copia_solo_spool_db": {"metodo": "cp spool.db + sqlite3 immutable=1", "rows_visibles": 49},
+      "eventos_perdidos_por_cp": 15,
+      "comando_medido": "sqlite3 \"file:</path>/spool.db?mode=ro\" \".backup canary_snap.db\"",
+      "conclusion": "cp de spool.db esta prohibido como snapshot; la API de backup incluye el WAL y da integridad ok"
+    },
+    "spools_canary_perfiles": {
+      "brokkr": {"done": 122, "lost": 7, "pending": 0},
+      "heimdall": {"done": 16, "lost": 1, "pending": 0}
+    },
+    "reglas_runbook_v3": [
+      "nunca borrar ni re-copiar plugins/langfuse-fleet antes de preservar el spool nuevo",
+      "snapshot consistente por API de backup con exportador quiescente o detenido; trio WAL/SHM solo con exportador detenido",
+      "integrity_check=ok obligatorio en el snapshot",
+      "conteo de estados antes y despues; preservation de pending>0 via archivo durable + dump/ids y migracion explicita",
+      "no arrancar spool vacio dejando pendientes atras",
+      "no borrar el ultimo snapshot (retencion 2)",
+      "criterio STOP/no-deploy si no se puede preservar",
+      "prohibido declarar pending=0 con inflight>0 o productores activos"
+    ],
+    "pasos_no_ejecutados": "R0/R1/rollback son documentales; no se ejecutaron sobre el spool real ni sobre perfiles reales"
+  },
+  "c3_conteo_404": {
+    "alcance_A": {
+      "glob": "<home>/logs/*.log",
+      "raices": ["/opt/hermes-agent-data", "/opt/hermes-agent-data/profiles/<12 dirs>", "/opt/hermes-agent-data/fleet-canary"],
+      "profundidad": 1,
+      "rutas_totales": 14,
+      "patron": "Failed to export span batch code: 404",
+      "muestreo_local": "2026-11-03 19:12:45 -0500",
+      "muestreo_utc": "2026-11-04T00:12:45Z",
+      "archivos_con_patron": 90,
+      "homes_con_coincidencias": 9,
+      "ocurrencias": 5122,
+      "por_home": {
+        "root(/opt/hermes-agent-data)": {"archivos": 21, "ocurrencias": 843, "ultimo_404": "2026-11-03 19:11:27"},
+        "bragi": {"archivos": 6, "ocurrencias": 820, "ultimo_404": "2026-11-03 15:32:01"},
+        "brokkr": {"archivos": 5, "ocurrencias": 1035, "ultimo_404": "2026-11-03 19:12:45"},
+        "comms": {"archivos": 4, "ocurrencias": 0, "ultimo_404": null},
+        "default": {"archivos": 3, "ocurrencias": 0, "ultimo_404": null},
+        "freyja": {"archivos": 6, "ocurrencias": 458, "ultimo_404": "2026-11-03 16:31:09"},
+        "heimdall": {"archivos": 5, "ocurrencias": 1331, "ultimo_404": "2026-11-03 19:09:45"},
+        "hermodr": {"archivos": 5, "ocurrencias": 51, "ultimo_404": "2026-10-22 18:43:38"},
+        "roshi": {"archivos": 9, "ocurrencias": 181, "ultimo_404": "2026-11-02 23:01:39"},
+        "sindri": {"archivos": 6, "ocurrencias": 233, "ultimo_404": "2026-11-02 17:49:19"},
+        "ullr": {"archivos": 4, "ocurrencias": 170, "ultimo_404": "2026-10-23 12:29:55"},
+        "vigia": {"archivos": 10, "ocurrencias": 0, "ultimo_404": null},
+        "vili": {"archivos": 4, "ocurrencias": 0, "ultimo_404": null},
+        "fleet-canary": {"archivos": 2, "ocurrencias": 0, "ultimo_404": null}
+      },
+      "nota_tz": "todos los timestamps en America/Bogota (-05); el muestreo tambien se registra en UTC"
+    },
+    "alcance_B_no_comparable": {
+      "comando": "find /opt/hermes-agent-data -path '*/logs*' -name '*.log'",
+      "archivos": 249,
+      "ocurrencias": 5147,
+      "diferencia": "otra raiz y recursion (incluye logs/curator/*, logs/process-results, logs/update_receipts)",
+      "uso": "demuestra que el numero cambia con el glob; no se cita como comparable"
+    },
+    "retractacion": "el '5x / 17.597 vs 4.768' de una ronda previa era diferencia de alcance, no crecimiento; retirado en el comentario 144 de t_d72cd140 y no repetido en v3",
+    "no_se_adjuntan_logs_completos": true
+  },
+  "c4_home_13_canario": {
+    "path": "/opt/hermes-agent-data/fleet-canary",
+    "plugins_enabled": ["langfuse-fleet"],
+    "arbol": "F5 completo en plugins/langfuse-fleet/",
+    "transport": "HERMES_LANGFUSE_TRANSPORT presente en .env (valor no impreso)",
+    "install_metadata": "no existe plugins/.install-metadata.json",
+    "productor_f4": {"pid": 691477, "cmd": "observability/f4_producer.py --home /opt/hermes-agent-data/fleet-canary", "arranque_local": "2026-11-03 18:32:25 -05", "vivo": true},
+    "trazas_f4_en_servidor": ["2026-11-03T23:32:27.230Z", "2026-11-03T23:47:28.568Z", "2026-11-04T00:02:29.727Z"],
+    "tratamiento": "FUERA de fases deploy/rollback/copias; no se cuenta entre los 12 desplegados; no modificado"
+  },
+  "c5_ventanas_y_origen": {
+    "ventana_entrega": {
+      "fuente": "GET /api/public/traces?fromTimestamp=2026-11-03T23:00:00Z contra el servidor vivo (200, totalItems=29 en esa ventana)",
+      "pasada_1_utc": "2026-11-03T23:17:07.215Z -> 2026-11-03T23:18:02.889Z",
+      "pasada_2_utc": "2026-11-03T23:18:41.104Z -> 2026-11-03T23:19:30.273Z",
+      "pasada_1_local": "2026-11-03 18:17:07 -> 18:18:03 -05",
+      "pasada_2_local": "2026-11-03 18:18:41 -> 18:19:30 -05",
+      "ids": 24,
+      "pasadas": 2,
+      "homes_por_pasada": 12,
+      "nota": "la v2 decia 12 (una pasada); el servidor conserva las dos"
+    },
+    "ventana_medicion_carga": {"local": "2026-11-03 18:20 -> 18:28 -05", "utc": "2026-11-03T23:20Z -> 23:28Z", "nota": "posterior a la entrega; son ventanas distintas"},
+    "traza_ids_deliv": [
+      {"utc": "2026-11-03T23:17:07.215Z", "turn_id": "deliv-default-root", "profile": "default-root", "id": "fbeeddccd25eb1739a118c11552f056a"},
+      {"utc": "2026-11-03T23:17:24.941Z", "turn_id": "deliv-bragi", "profile": "bragi", "id": "0854166f5b57d9f3a0c5b59b2059da4c"},
+      {"utc": "2026-11-03T23:17:29.535Z", "turn_id": "deliv-brokkr", "profile": "brokkr", "id": "beb42236073f75c3354d35ea9d3a1412"},
+      {"utc": "2026-11-03T23:17:33.978Z", "turn_id": "deliv-comms", "profile": "comms", "id": "747211cb5f2768f2c6861c729f52b74f"},
+      {"utc": "2026-11-03T23:17:38.014Z", "turn_id": "deliv-default", "profile": "default", "id": "f64896778868bc8a4b1854637a0f1bc9"},
+      {"utc": "2026-11-03T23:17:41.491Z", "turn_id": "deliv-freyja", "profile": "freyja", "id": "2f9e7f5bc398d2f2997aaf153ed4ba61"},
+      {"utc": "2026-11-03T23:17:44.709Z", "turn_id": "deliv-heimdall", "profile": "heimdall", "id": "01f48006a6ea19af327b1d7883d7f78e"},
+      {"utc": "2026-11-03T23:17:48.399Z", "turn_id": "deliv-hermodr", "profile": "hermodr", "id": "9e40d3a085437318918a9dd7240967ff"},
+      {"utc": "2026-11-03T23:17:51.563Z", "turn_id": "deliv-roshi", "profile": "roshi", "id": "ddfb8284c51cd9076581623e998a02ed"},
+      {"utc": "2026-11-03T23:17:55.129Z", "turn_id": "deliv-sindri", "profile": "sindri", "id": "944f566acf0fffe95ab0c4d6b9d007f7"},
+      {"utc": "2026-11-03T23:17:59.135Z", "turn_id": "deliv-ullr", "profile": "ullr", "id": "cdb988f36afe7d9c709a6318c8af2c0e"},
+      {"utc": "2026-11-03T23:18:02.889Z", "turn_id": "deliv-vili", "profile": "vili", "id": "674e725cd500b625cc928a5af7f55603"},
+      {"utc": "2026-11-03T23:18:41.104Z", "turn_id": "deliv-default-root", "profile": "default-root", "id": "278662945ed592c1af89dd8a2b08839e"},
+      {"utc": "2026-11-03T23:18:44.790Z", "turn_id": "deliv-bragi", "profile": "bragi", "id": "fd7f9efcd230f5fa6817bcb007dad591"},
+      {"utc": "2026-11-03T23:18:48.187Z", "turn_id": "deliv-brokkr", "profile": "brokkr", "id": "c7ae9719f1c8859e97c5e36c4b8e26ad"},
+      {"utc": "2026-11-03T23:18:51.409Z", "turn_id": "deliv-comms", "profile": "comms", "id": "746c4fb5de63dc0c020921b8adeefd00"},
+      {"utc": "2026-11-03T23:18:55.036Z", "turn_id": "deliv-default", "profile": "default", "id": "eba784310a88832feacd6002d7eeea65"},
+      {"utc": "2026-11-03T23:18:58.536Z", "turn_id": "deliv-freyja", "profile": "freyja", "id": "27d487a10649cd0da0cb5fa7ed6288a6"},
+      {"utc": "2026-11-03T23:19:02.321Z", "turn_id": "deliv-heimdall", "profile": "heimdall", "id": "bebb90866570b51d66f744d312a59eec"},
+      {"utc": "2026-11-03T23:19:17.216Z", "turn_id": "deliv-hermodr", "profile": "hermodr", "id": "a223d495083187013f703ca72d1d5bd2"},
+      {"utc": "2026-11-03T23:19:20.657Z", "turn_id": "deliv-roshi", "profile": "roshi", "id": "11652e880e654849d20d7710e0894623"},
+      {"utc": "2026-11-03T23:19:23.560Z", "turn_id": "deliv-sindri", "profile": "sindri", "id": "76207f28e9fca81fd16de1a670c3fa75"},
+      {"utc": "2026-11-03T23:19:26.910Z", "turn_id": "deliv-ullr", "profile": "ullr", "id": "ead186b3093385a73fb8af8da201efc7"},
+      {"utc": "2026-11-03T23:19:30.273Z", "turn_id": "deliv-vili", "profile": "vili", "id": "a9b9118ff90871a608cf1f7dd399436e"}
+    ],
+    "entrega_fue_en_homes_desechables": "12 homes de PRUEBA, no los 12 perfiles operativos; eso solo se prueba tras desplegar con un turno real por home",
+    "traza_r2_reviewer_probes": [
+      {"utc": "2026-11-03T23:39:37.898Z", "turn_id": "r2rev-brokkr"},
+      {"utc": "2026-11-03T23:39:46.907Z", "turn_id": "r2rev-hermodr"}
+    ],
+    "artefactos_timestamps": [
+      {"artefacto": "v1 propuesta", "utc": "2026-11-03T22:52:08Z"},
+      {"artefacto": "v2 propuesta", "utc": "2026-11-03T23:37:31Z"},
+      {"artefacto": "review_r2_evidence.json", "utc": "2026-11-03T23:56:08Z"},
+      {"artefacto": "review_t_5b23d653_evidence.json.gz", "utc": "2026-11-04T00:08:22Z"}
+    ],
+    "sin_mutar_datos": "ningun dato se ajusto para cuadrar el relato; TZ convertida con date -u -d"
+  },
+  "servidor_langfuse": {
+    "base_url": "http://100.73.30.29:3010",
+    "version": "2.95.11",
+    "health": "GET /api/public/health -> 200 {status:OK, version:2.95.11}",
+    "otlp": "POST /api/public/otel/v1/traces -> 404 text/html (Next.js) - control negativo re-medido hoy",
+    "traces_total": 4167,
+    "ventana_2026-10-15_2026-11-01": 0,
+    "ultima_flota_real": "2026-10-14 (747)",
+    "credenciales": "leidas del .env del canario por el shell; nunca impresas en stdout ni incluidas aqui"
+  },
+  "side_effects": {
+    "trazas_nuevas": 0,
+    "eventos_nuevos": 0,
+    "llamadas_modelo": 0,
+    "config_modificada": 0,
+    "servicios_reiniciados": 0,
+    "commits": 0,
+    "spool_real_modificado": 0,
+    "lecturas": "GET a API Langfuse (traces 2 paginas filtradas + health), POST sin credenciales a ruta OTLP inexistente (404), sqlite3 mode=ro/immutable sobre spool y copia .backup a scratch, grep/sha256/git de solo lectura",
+    "f4_intacto": "pid 691477 no se toco; su spool y su estado siguen como estaban",
+    "artefactos_temporales": "/opt/hermes-agent-data/profiles/brokkr/cache/scratch/t_5a4be53b/ (no es fuente; la fuente vive en el repo .specs y en adjuntos durables)"
+  },
+  "open_decisions_humanas_no_aprobadas": [
+    "Opcion A (renombrar manifiesto) vs B (migrar clave a langfuse-fleet)",
+    "publicar F5 en el catalogo o congelar updates",
+    "tracing en 12 homes o solo operativos",
+    "profiles/default: quitar clave o instalar plugin",
+    "seguir en 2.95.11 + legacy o subir a v3"
+  ],
+  "deployment_not_approved": true,
+  "commit_not_authorized": "fuente F5 sigue sin trackear; la autorizacion previa fue solo guard, no commit de Langfuse"
+}

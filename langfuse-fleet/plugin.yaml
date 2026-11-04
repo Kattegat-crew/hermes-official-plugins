@@ -1,0 +1,48 @@
+name: langfuse-fleet
+label: Langfuse Fleet
+kind: standalone
+# Sidecar runtime (F5): this plugin pins langfuse 4.x while the bundled observability/langfuse
+# plugin runs the 2.x API from the shared lazy store. Leaving it a venv *member* would let PM
+# install 4.x into the shared venv and change that plugin's SDK under every profile, so PM must
+# not build this plugin's dependencies; they come from scripts/provision_sdk_store.sh
+# (per-interpreter store, resolved by sdk_env.py and appended to sys.path). The pin itself stays
+# in pyproject.toml (PM's packaging surface) and sdk_env.SDK_VERSION — it is deliberately NOT
+# repeated in python_dependencies, whose only effect here would be a misleading
+# "run hermes pm repair" discovery warning for a sidecar PM is not supposed to build.
+python_runtime: external
+version: 2.0.0
+author: NousResearch
+homepage: https://github.com/NousResearch/hermes-official-plugins/tree/main/langfuse-fleet
+description: >
+  Langfuse observability for Hermes Agent: one trace per turn, one generation
+  per LLM call (usage and cost from Hermes' own pricing, including cache and
+  reasoning tokens), one observation per tool call and subagent. Content
+  capture is sanitized by default (metadata and full are opt-in). Formerly
+  built into Hermes core as observability/langfuse.
+requires_hermes: ">=0.21.7"
+provides_hooks:
+  - pre_api_request
+  - post_api_request
+  - api_request_error
+  - pre_llm_call
+  - post_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - on_session_finalize
+  - on_session_end
+  - subagent_start
+  - subagent_stop
+requires_env:
+  - name: HERMES_LANGFUSE_PUBLIC_KEY
+    description: "Langfuse project public key (pk-lf-...)"
+    url: https://cloud.langfuse.com
+    secret: false
+  - name: HERMES_LANGFUSE_SECRET_KEY
+    description: "Langfuse project secret key (sk-lf-...)"
+    url: https://cloud.langfuse.com
+    secret: true
+optional_env:
+  - name: HERMES_LANGFUSE_BASE_URL
+    description: "Langfuse server URL for a self-hosted instance (default: https://cloud.langfuse.com)"
+    prompt: "Langfuse server URL"
+    password: false
