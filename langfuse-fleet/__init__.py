@@ -789,12 +789,17 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     # be joined back to the card without guessing from session names. Omitted outside kanban.
     kanban = {k: v for k, v in (("kanban_task_id", _env("HERMES_KANBAN_TASK")),
                                 ("kanban_run_id", _env("HERMES_KANBAN_RUN_ID"))) if v}
+    env_name = _env("HERMES_LANGFUSE_ENV").strip().lower()
     metadata = {
         "source": "hermes", "task_id": task_id, "turn_id": turn_id, "api_request_id": api_request_id,
         "platform": platform, "provider": provider, "model": model, "api_mode": api_mode,
         "capture_mode": "metadata" if getattr(client, "is_legacy_ingestion", False) else _capture_mode(),
-        "profile": profile, **kanban,
+        "profile": profile, **({"env": env_name} if env_name else {}), **kanban,
     }
+    # Tags keep the profile and environment filterable in the Langfuse UI and feed the
+    # Metabase "Control de Flota DEV vs PROD" cards, which parse ``env:`` and ``bot:``.
+    root_tags = [*_trace_tags(platform), *([f"env:{env_name}"] if env_name else []),
+                 *([f"bot:{profile}"] if profile else [])]
     # session_id must be in trace_context for Langfuse session grouping.
     trace_ctx: dict[str, Any] = {"trace_id": trace_id, **({"session_id": session_id} if session_id else {})}
 
@@ -803,11 +808,14 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     # a later hook on another worker thread, so every turn logged "Failed to detach context" (hermes-agent#95057). A span
     # created inside propagate_attributes still carries its session / trace name / tags.
     def open_root():
-        return client.start_observation(trace_context=trace_ctx, name="Hermes turn", as_type="chain",
-                                        input=trace_input, metadata=metadata)
+        kwargs: dict[str, Any] = {"trace_context": trace_ctx, "name": "Hermes turn", "as_type": "chain",
+                                  "input": trace_input, "metadata": metadata}
+        if getattr(client, "is_legacy_ingestion", False):
+            kwargs["tags"] = root_tags
+        return client.start_observation(**kwargs)
 
     root_span = None
-    propagated = {"session_id": session_id or task_key, "trace_name": "Hermes turn", "tags": _trace_tags(platform)}
+    propagated = {"session_id": session_id or task_key, "trace_name": "Hermes turn", "tags": root_tags}
     if profile or kanban:
         propagated["metadata"] = {**({"profile": profile} if profile else {}), **kanban}
     if propagate_attributes is not None:

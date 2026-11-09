@@ -112,15 +112,18 @@ def test_kanban_worker_trace_names_its_board_task_and_run(traced, monkeypatch):
 
 # Platform / trigger / cron-job tags (hermes-agent#102755, #74930, #88502).
 
-def test_interactive_turn_is_tagged_with_platform_and_trigger(traced):
+def test_interactive_turn_is_tagged_with_platform_and_trigger(traced, monkeypatch):
     mod, _, propagated, _ = traced
+    monkeypatch.setenv("HERMES_LANGFUSE_ENV", "test")
     # A cron-shaped session id outside a cron execution must not be tagged with a job.
     _open_turn(mod, session="cron_lookalike_20260101_000000", platform="Telegram")
-    assert propagated[0]["tags"] == ["hermes", "langfuse", "platform:telegram", "trigger:interactive"]
+    assert propagated[0]["tags"] == ["hermes", "langfuse", "platform:telegram", "trigger:interactive",
+                                     "env:test", "bot:default"]
 
 
-def test_cron_run_is_tagged_with_its_stable_job_id(traced):
+def test_cron_run_is_tagged_with_its_stable_job_id(traced, monkeypatch):
     mod, _, propagated, _ = traced
+    monkeypatch.setenv("HERMES_LANGFUSE_ENV", "test")
     from cron.execution_identity import enter_cron_execution, exit_cron_execution
 
     # The scheduler binds the running job; legacy / hand-edited ids (not 12-hex) are valid too.
@@ -129,7 +132,8 @@ def test_cron_run_is_tagged_with_its_stable_job_id(traced):
         _open_turn(mod, session="cron_test-job_20261012_093000", platform="cron")
     finally:
         exit_cron_execution(token)
-    assert propagated[0]["tags"] == ["hermes", "langfuse", "platform:cron", "trigger:cron", "cron-job:test-job"]
+    assert propagated[0]["tags"] == ["hermes", "langfuse", "platform:cron", "trigger:cron",
+                                     "cron-job:test-job", "env:test", "bot:default"]
 
 
 # Responses API tool items in generation input (hermes-agent#84186).

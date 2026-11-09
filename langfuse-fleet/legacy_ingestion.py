@@ -42,7 +42,7 @@ _IDLE_WAKE_SECONDS = 600.0
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:/@+-]{1,128}$")
 _SECRET_PREFIX = re.compile(r"(?i)^(?:pk-lf-|sk-lf-|sk-|pk_|sk_|gh[pousr]_|github_pat_|xox[baprs]-|bearer\s)")
 _METADATA_KEYS = frozenset({
-    "source", "platform", "provider", "model", "api_mode", "profile", "turn_id",
+    "source", "platform", "provider", "model", "api_mode", "profile", "env", "turn_id",
     "api_request_id", "session_id", "trace_id", "parentObservationId",
 })
 _LEVELS = frozenset({"DEBUG", "DEFAULT", "WARNING", "ERROR"})
@@ -267,18 +267,24 @@ class LegacyIngestionClient:
 
     def start_observation(self, *, trace_context: dict[str, Any], name: str,
                           as_type: str, input: Any = None, metadata: Any = None,
-                          model: str | None = None, model_parameters: Any = None) -> "LegacyObservation":
+                          model: str | None = None, model_parameters: Any = None,
+                          tags: list[str] | None = None) -> "LegacyObservation":
         trace_id = _identifier(trace_context.get("trace_id"))
         if trace_id is None:
             trace_id = uuid.uuid4().hex
         session_id = _identifier(trace_context.get("session_id"))
         safe_metadata = _safe_metadata(metadata)
+        safe_tags = list(dict.fromkeys(
+            tag for tag in (tags or []) if isinstance(tag, str) and _identifier(tag)
+        ))
         created = _timestamp()
         trace_body: dict[str, Any] = {"id": trace_id, "timestamp": created}
         if session_id:
             trace_body["sessionId"] = session_id
         if safe_metadata:
             trace_body["metadata"] = safe_metadata
+        if safe_tags:
+            trace_body["tags"] = safe_tags
         self._enqueue("trace-create", trace_body)
         return self._observation(trace_id, None, as_type, metadata=safe_metadata,
                                  model=model, created=created, root=True)
