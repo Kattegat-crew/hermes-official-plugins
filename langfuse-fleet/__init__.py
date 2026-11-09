@@ -789,12 +789,17 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     # be joined back to the card without guessing from session names. Omitted outside kanban.
     kanban = {k: v for k, v in (("kanban_task_id", _env("HERMES_KANBAN_TASK")),
                                 ("kanban_run_id", _env("HERMES_KANBAN_RUN_ID"))) if v}
+    env_name = _env("HERMES_LANGFUSE_ENV").strip().lower()
     metadata = {
         "source": "hermes", "task_id": task_id, "turn_id": turn_id, "api_request_id": api_request_id,
         "platform": platform, "provider": provider, "model": model, "api_mode": api_mode,
         "capture_mode": "metadata" if getattr(client, "is_legacy_ingestion", False) else _capture_mode(),
-        "profile": profile, **kanban,
+        "profile": profile, **({"env": env_name} if env_name else {}), **kanban,
     }
+    # Tags keep the profile and environment filterable in the Langfuse UI and feed the
+    # Metabase "Control de Flota DEV vs PROD" cards, which parse ``env:`` and ``bot:``.
+    root_tags = [*_trace_tags(platform), *([f"env:{env_name}"] if env_name else []),
+                 *([f"bot:{profile}"] if profile else [])]
     # session_id must be in trace_context for Langfuse session grouping.
     trace_ctx: dict[str, Any] = {"trace_id": trace_id, **({"session_id": session_id} if session_id else {})}
 
@@ -803,11 +808,14 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     # a later hook on another worker thread, so every turn logged "Failed to detach context" (hermes-agent#95057). A span
     # created inside propagate_attributes still carries its session / trace name / tags.
     def open_root():
-        return client.start_observation(trace_context=trace_ctx, name="Hermes turn", as_type="chain",
-                                        input=trace_input, metadata=metadata)
+        kwargs: dict[str, Any] = {"trace_context": trace_ctx, "name": "Hermes turn", "as_type": "chain",
+                                  "input": trace_input, "metadata": metadata}
+        if getattr(client, "is_legacy_ingestion", False):
+            kwargs["tags"] = root_tags
+        return client.start_observation(**kwargs)
 
     root_span = None
-    propagated = {"session_id": session_id or task_key, "trace_name": "Hermes turn", "tags": _trace_tags(platform)}
+    propagated = {"session_id": session_id or task_key, "trace_name": "Hermes turn", "tags": root_tags}
     if profile or kanban:
         propagated["metadata"] = {**({"profile": profile} if profile else {}), **kanban}
     if propagate_attributes is not None:
@@ -1124,6 +1132,36 @@ def on_post_llm_call(*, task_id: str = "", session_id: str = "", provider: str =
         _finish_trace(task_key, output=output)
 
 
+_SKILL_TOOLS = frozenset({"skill_view", "skill_manage", "skill_create", "skill_patch", "skill_edit"})
+
+
+def _skill_from_args(tool_name: str, args: Any) -> str:
+    """Best-effort skill name from a skill tool's args, kept content-free."""
+    if tool_name not in _SKILL_TOOLS:
+        return ""
+    data = args
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            return ""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("name", "skill", "skill_name"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _skill_from_result(tool_name: str, result: Any) -> str:
+    """The Jev router names the routed skill on the first line of its result."""
+    if tool_name != "skill_route" or not isinstance(result, str):
+        return ""
+    match = re.search(r"Skill recomendada:\s*([A-Za-z0-9_.:/@+-]{1,128})", result)
+    return match.group(1) if match else ""
+
+
 def on_pre_tool_call(*, tool_name: str = "", args: Any = None, task_id: str = "",
                      session_id: str = "", tool_call_id: str = "",
                      turn_id: str = "", api_request_id: str = "", **_: Any) -> None:
@@ -1134,8 +1172,11 @@ def on_pre_tool_call(*, tool_name: str = "", args: Any = None, task_id: str = ""
         state = _TRACE_STATE.get(task_key)
         if state is None:
             return
+        skill = _skill_from_args(tool_name, args)
+        metadata = {"tool_name": tool_name, "tool_call_id": tool_call_id,
+                    **({"skill": skill} if skill else {})}
         observation = _start_child_observation(state, name=f"Tool: {tool_name}", as_type="tool", input_value=_capture_content(args),
-                                               metadata={"tool_name": tool_name, "tool_call_id": tool_call_id})
+                                               metadata=metadata)
         if tool_call_id:
             state.tools[tool_call_id] = observation
         else:
@@ -1177,8 +1218,10 @@ def on_post_tool_call(*, tool_name: str = "", args: Any = None, result: Any = No
     # status_message stays the error type: the message can echo result content, which the
     # capture mode already governs via output.
     level = {"error": "ERROR", "blocked": "WARNING", "cancelled": "WARNING"}.get(status)
+    skill = _skill_from_args(tool_name, args) or _skill_from_result(tool_name, result)
     _end_observation(observation, output=safe_result_value,
-                     metadata={"tool_name": tool_name, "args": _capture_content(args, parse_json_strings=True)},
+                     metadata={"tool_name": tool_name, "args": _capture_content(args, parse_json_strings=True),
+                               **({"skill": skill} if skill else {})},
                      level=level, status_message=str(error_type or status)[:200] if level else None)
 
 

@@ -40,10 +40,12 @@ _FINISH_WAIT_SECONDS = 0.05
 # The worker's idle wake doubles as the expiry-sweep cadence (02-design.md §3: ~10 min).
 _IDLE_WAKE_SECONDS = 600.0
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:/@+-]{1,128}$")
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_.:/@+ -]{1,80}$")
 _SECRET_PREFIX = re.compile(r"(?i)^(?:pk-lf-|sk-lf-|sk-|pk_|sk_|gh[pousr]_|github_pat_|xox[baprs]-|bearer\s)")
 _METADATA_KEYS = frozenset({
-    "source", "platform", "provider", "model", "api_mode", "profile", "turn_id",
+    "source", "platform", "provider", "model", "api_mode", "profile", "env", "turn_id",
     "api_request_id", "session_id", "trace_id", "parentObservationId",
+    "tool_name", "tool_call_id", "skill",
 })
 _LEVELS = frozenset({"DEBUG", "DEFAULT", "WARNING", "ERROR"})
 
@@ -267,34 +269,42 @@ class LegacyIngestionClient:
 
     def start_observation(self, *, trace_context: dict[str, Any], name: str,
                           as_type: str, input: Any = None, metadata: Any = None,
-                          model: str | None = None, model_parameters: Any = None) -> "LegacyObservation":
+                          model: str | None = None, model_parameters: Any = None,
+                          tags: list[str] | None = None) -> "LegacyObservation":
         trace_id = _identifier(trace_context.get("trace_id"))
         if trace_id is None:
             trace_id = uuid.uuid4().hex
         session_id = _identifier(trace_context.get("session_id"))
         safe_metadata = _safe_metadata(metadata)
+        safe_tags = list(dict.fromkeys(
+            tag for tag in (tags or []) if isinstance(tag, str) and _identifier(tag)
+        ))
         created = _timestamp()
         trace_body: dict[str, Any] = {"id": trace_id, "timestamp": created}
         if session_id:
             trace_body["sessionId"] = session_id
         if safe_metadata:
             trace_body["metadata"] = safe_metadata
+        if safe_tags:
+            trace_body["tags"] = safe_tags
         self._enqueue("trace-create", trace_body)
         return self._observation(trace_id, None, as_type, metadata=safe_metadata,
-                                 model=model, created=created, root=True)
+                                 model=model, created=created, root=True, name=name)
 
     def _observation(self, trace_id: str, parent_id: str | None, as_type: str, *,
                      metadata: Any = None, model: Any = None, model_parameters: Any = None,
                      created: str | None = None,
-                     root: bool = False) -> "LegacyObservation":
+                     root: bool = False, name: str | None = None) -> "LegacyObservation":
         observation_id = uuid.uuid4().hex
         kind = "generation" if as_type == "generation" else "span"
         # Names supplied by Hermes can contain arbitrary tool or user-controlled text.
-        name = "Hermes turn" if root else {
+        default_name = "Hermes turn" if root else {
             "generation": "Hermes generation", "tool": "Hermes tool", "subagent": "Hermes subagent",
         }.get(as_type, "Hermes observation")
+        safe_name = (name.strip() if isinstance(name, str) and _SAFE_NAME.fullmatch(name.strip())
+                     and not _SECRET_PREFIX.search(name) else None)
         body: dict[str, Any] = {
-            "id": observation_id, "traceId": trace_id, "name": name,
+            "id": observation_id, "traceId": trace_id, "name": safe_name or default_name,
             "startTime": created or _timestamp(),
         }
         if parent_id:
@@ -388,7 +398,7 @@ class LegacyObservation:
                           model_parameters: Any = None) -> "LegacyObservation":
         return self._client._observation(self._trace_id, self._id, as_type,
                                          metadata=metadata, model=model,
-                                         model_parameters=model_parameters)
+                                         model_parameters=model_parameters, name=name)
 
     def set_trace_io(self, **kwargs: Any) -> None:
         # Deliberately omit all content in this transport, including trace-level input/output.
