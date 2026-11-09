@@ -1132,6 +1132,36 @@ def on_post_llm_call(*, task_id: str = "", session_id: str = "", provider: str =
         _finish_trace(task_key, output=output)
 
 
+_SKILL_TOOLS = frozenset({"skill_view", "skill_manage", "skill_create", "skill_patch", "skill_edit"})
+
+
+def _skill_from_args(tool_name: str, args: Any) -> str:
+    """Best-effort skill name from a skill tool's args, kept content-free."""
+    if tool_name not in _SKILL_TOOLS:
+        return ""
+    data = args
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            return ""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("name", "skill", "skill_name"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _skill_from_result(tool_name: str, result: Any) -> str:
+    """The Jev router names the routed skill on the first line of its result."""
+    if tool_name != "skill_route" or not isinstance(result, str):
+        return ""
+    match = re.search(r"Skill recomendada:\s*([A-Za-z0-9_.:/@+-]{1,128})", result)
+    return match.group(1) if match else ""
+
+
 def on_pre_tool_call(*, tool_name: str = "", args: Any = None, task_id: str = "",
                      session_id: str = "", tool_call_id: str = "",
                      turn_id: str = "", api_request_id: str = "", **_: Any) -> None:
@@ -1142,8 +1172,11 @@ def on_pre_tool_call(*, tool_name: str = "", args: Any = None, task_id: str = ""
         state = _TRACE_STATE.get(task_key)
         if state is None:
             return
+        skill = _skill_from_args(tool_name, args)
+        metadata = {"tool_name": tool_name, "tool_call_id": tool_call_id,
+                    **({"skill": skill} if skill else {})}
         observation = _start_child_observation(state, name=f"Tool: {tool_name}", as_type="tool", input_value=_capture_content(args),
-                                               metadata={"tool_name": tool_name, "tool_call_id": tool_call_id})
+                                               metadata=metadata)
         if tool_call_id:
             state.tools[tool_call_id] = observation
         else:
@@ -1185,8 +1218,10 @@ def on_post_tool_call(*, tool_name: str = "", args: Any = None, result: Any = No
     # status_message stays the error type: the message can echo result content, which the
     # capture mode already governs via output.
     level = {"error": "ERROR", "blocked": "WARNING", "cancelled": "WARNING"}.get(status)
+    skill = _skill_from_args(tool_name, args) or _skill_from_result(tool_name, result)
     _end_observation(observation, output=safe_result_value,
-                     metadata={"tool_name": tool_name, "args": _capture_content(args, parse_json_strings=True)},
+                     metadata={"tool_name": tool_name, "args": _capture_content(args, parse_json_strings=True),
+                               **({"skill": skill} if skill else {})},
                      level=level, status_message=str(error_type or status)[:200] if level else None)
 
 

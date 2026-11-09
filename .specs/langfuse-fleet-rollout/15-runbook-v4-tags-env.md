@@ -73,18 +73,20 @@ Esto alimenta el filtro por tags de la UI/API de Langfuse y las cards 53/54 del 
 Metabase id 5 (`Control de Flota DEV vs PROD`), que parsean `tags[env:]` y `tags[bot:]`.
 
 Cobertura: un trace por turno, una generation por llamada LLM (usage/cost), un span por
-tool call (`tool_name`, `tool_call_id`) y un span por subagente. Las skills se trazan como
-tool calls cuando el agente las invoca por herramienta; no hay un span dedicado de skill.
+tool call (nombre `Tool: <tool_name>`, metadata `tool_name`, `tool_call_id`, `skill`) y un
+span por subagente. `skill` se extrae de args de `skill_view`/`skill_manage` o de
+`Skill recomendada: <name>` en el resultado de `skill_route`; no hay un span dedicado de skill.
 
 ## 5. Verificación
 
-- `pytest langfuse-fleet/tests -q` → **233 passed, 3 skipped, 1 failure preexistente**
+- `pytest langfuse-fleet/tests -q` → **235 passed, 3 skipped, 1 failure preexistente**
   (`test_sdk_provisioning::test_pm_reads_the_plugin_as_a_non_member`, atributo
   `PythonDeclaration.is_member` ausente en el core actual; reproducido en la rama base).
 - Canary: `F3_RESULT ok=true`, `transport=legacy`, `capture=metadata`,
   `assertion_all_delivered=true`, `assertion_allowlist_clean=true`.
 - `errors.log`: **0** `Failed to export span batch` posteriores al corte.
 - Spool: todos los eventos `done`; sin `pending`/`in-flight`.
+- Atribución tool/skill: `select metadata->>'tool_name', metadata->>'skill', count(*) from observations group by 1,2` → los spans de tool llevan `Tool: <name>` y `skill` cuando aplica.
 - Traza real de cron verificada: `jacqueline` 2026-11-09T22:43:16Z con
   `env=production`, tags `bot:jacqueline,cron-job:…,env:production,…`.
 - Metabase: DS id 2 `Langfuse Production` → `dbname=langfuse`; dashboard 5 con cards

@@ -2629,3 +2629,13 @@ class TestChildObservationsInheritTraceAttributes:
         assert opened[0]["session_id"] == "sess-p" and opened[0]["tags"][:2] == ["hermes", "langfuse"]
         for _, attrs in children:
             assert attrs == opened[0]  # exactly the root's session / trace name / tags
+
+
+def test_skill_metadata_extracts_skill_name():
+    sys.modules.pop("langfuse_fleet_plugin", None)
+    import importlib
+    mod = importlib.import_module("langfuse_fleet_plugin")
+    assert mod._skill_from_args("skill_view", {"name": "hermes-cron-ops"}) == "hermes-cron-ops"
+    assert mod._skill_from_args("terminal", {"name": "x"}) == ""
+    assert mod._skill_from_result("skill_route", "Skill recomendada: independent-infra-audit\n...") == "independent-infra-audit"
+    assert mod._skill_from_result("skill_route", "No se encontró") == ""
