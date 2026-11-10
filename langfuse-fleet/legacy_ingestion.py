@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -78,6 +79,11 @@ def _safe_label(value: Any) -> str | None:
     if _SAFE_NAME.fullmatch(value) and not _SECRET_PREFIX.search(value):
         return value
     return None
+
+
+def _capture_enabled() -> bool:
+    """Legacy transport carries content only when the profile opts into sanitized/full."""
+    return os.environ.get("HERMES_LANGFUSE_CAPTURE", "metadata").strip().lower() in ("sanitized", "full")
 
 
 def _safe_usage(value: Any) -> dict[str, int] | None:
@@ -300,15 +306,18 @@ class LegacyIngestionClient:
         trace_body["name"] = safe_name or "Hermes turn"
         profile = safe_metadata.get("profile")
         if profile:
-            trace_body["userId"] = profile
+            trace_body["userId"] = "ragnar" if profile == "default" else profile
+        if _capture_enabled() and input is not None:
+            trace_body["input"] = input
         self._enqueue("trace-create", trace_body)
         return self._observation(trace_id, None, as_type, metadata=safe_metadata,
-                                 model=model, created=created, root=True, name=name)
+                                 model=model, created=created, root=True, name=name, input=input)
 
     def _observation(self, trace_id: str, parent_id: str | None, as_type: str, *,
                      metadata: Any = None, model: Any = None, model_parameters: Any = None,
                      created: str | None = None,
-                     root: bool = False, name: str | None = None) -> "LegacyObservation":
+                     root: bool = False, name: str | None = None,
+                     input: Any = None, output: Any = None) -> "LegacyObservation":
         observation_id = uuid.uuid4().hex
         kind = "generation" if as_type == "generation" else "span"
         # Names supplied by Hermes can contain arbitrary tool or user-controlled text.
@@ -320,6 +329,11 @@ class LegacyIngestionClient:
             "id": observation_id, "traceId": trace_id, "name": safe_name or default_name,
             "startTime": created or _timestamp(),
         }
+        if _capture_enabled():
+            if input is not None:
+                body["input"] = input
+            if output is not None:
+                body["output"] = output
         if parent_id:
             body["parentObservationId"] = parent_id
         safe_metadata = _safe_metadata(metadata)
@@ -411,16 +425,26 @@ class LegacyObservation:
                           model_parameters: Any = None) -> "LegacyObservation":
         return self._client._observation(self._trace_id, self._id, as_type,
                                          metadata=metadata, model=model,
-                                         model_parameters=model_parameters, name=name)
+                                         model_parameters=model_parameters, name=name, input=input)
 
     def set_trace_io(self, **kwargs: Any) -> None:
-        # Deliberately omit all content in this transport, including trace-level input/output.
-        return None
+        if not _capture_enabled():
+            return
+        body: dict[str, Any] = {"id": self._trace_id}
+        for key in ("input", "output"):
+            if key in kwargs and kwargs[key] is not None:
+                body[key] = kwargs[key]
+        if len(body) > 1:
+            self._client._enqueue("trace-update", body)
 
     def update(self, **kwargs: Any) -> "LegacyObservation":
         with self._lock:
             if self._ended:
                 return self
+            if _capture_enabled():
+                for key in ("input", "output"):
+                    if key in kwargs and kwargs[key] is not None:
+                        self._updates[key] = kwargs[key]
             if "metadata" in kwargs:
                 safe_metadata = _safe_metadata(kwargs["metadata"])
                 if safe_metadata:

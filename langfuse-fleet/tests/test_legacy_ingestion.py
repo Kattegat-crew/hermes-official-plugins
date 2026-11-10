@@ -338,4 +338,35 @@ def test_legacy_trace_keeps_profile_name_and_user_id():
     _wait_for_batches(api, 1)
     trace = _events(api)[0]["body"]
     assert trace["name"] == "Hermes turn [ragnar]"
-    assert trace["userId"] == "default"
+    assert trace["userId"] == "ragnar"
+
+
+def test_legacy_full_capture_includes_trace_io(monkeypatch):
+    monkeypatch.setenv("HERMES_LANGFUSE_CAPTURE", "full")
+    legacy = _legacy_module()
+    api = _API()
+    client = legacy.LegacyIngestionClient(api)
+    trace_id = client.create_trace_id(seed="session-token::turn-token")
+    root = client.start_observation(
+        trace_context={"trace_id": trace_id, "session_id": "session-token"},
+        name="Hermes turn [ragnar]", as_type="chain",
+        input={"role": "user", "content": "hola"}, metadata={"profile": "default"})
+    root.set_trace_io(input={"role": "user", "content": "hola"})
+    gen = root.start_observation(name="Hermes generation", as_type="generation",
+                                 input={"messages": [{"role": "user", "content": "hola"}]}, metadata={})
+    gen.update(output={"content": "respuesta"})
+    gen.end()
+    root.set_trace_io(output={"content": "respuesta"})
+    root.end()
+    client.flush()
+    _wait_for_batches(api, 1)
+    events = _events(api)
+    trace = events[0]["body"]
+    assert trace["input"] == {"role": "user", "content": "hola"}
+    assert trace["userId"] == "ragnar"
+    trace_updates = [e["body"] for e in events if e["type"] == "trace-update"]
+    assert any(u.get("output") == {"content": "respuesta"} for u in trace_updates)
+    gen_create = next(e["body"] for e in events if e["type"] == "generation-create")
+    assert gen_create["input"] == {"messages": [{"role": "user", "content": "hola"}]}
+    gen_update = next(e["body"] for e in events if e["type"] == "generation-update" and "output" in e["body"])
+    assert gen_update["output"] == {"content": "respuesta"}
