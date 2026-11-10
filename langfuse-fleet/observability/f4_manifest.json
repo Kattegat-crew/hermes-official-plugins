@@ -1,0 +1,72 @@
+{
+  "schema": "langfuse-fleet/f4-observation/2",
+  "namespace": "fleet-f4-live",
+  "real_turn_disposition": "executed",
+  "window": {
+    "hours": 24,
+    "cadence_min": 15,
+    "expected_intervals": 96,
+    "min_samples": 97,
+    "max_gap_min": 31
+  },
+  "sessions": [
+    {"role": "synthetic", "id": "fleet-f4-live", "required": true},
+    {"role": "real_turn", "id": null, "required": false}
+  ],
+  "spool": {
+    "relpath": "plugins/langfuse-fleet/spool.db",
+    "retention_hours": 24,
+    "max_rows": 4096
+  },
+  "metadata_allowlist": [
+    "api_mode", "api_request_id", "model", "platform",
+    "profile", "provider", "source", "turn_id"
+  ],
+  "leak_tokens": ["FAKE", "canary prompt", "synthetic tool result"],
+  "thresholds": {
+    "delivery_ratio_min": 0.95,
+    "readback_errors_max": 0,
+    "duplicate_ids_max": 0,
+    "content_leak_traces_max": 0,
+    "stuck_rows_max": 0
+  },
+  "producer": {
+    "events_per_cycle": 3,
+    "interval_s": 900,
+    "max_cycles": 96,
+    "max_total_events": 384,
+    "stuck_lease_s": 3600,
+    "heartbeat_max_age_s": 1860,
+    "stop_grace_s": 30
+  },
+  "endpoint": {
+    "base_url": "http://100.73.30.29:3010",
+    "transport": "legacy-rest-readonly",
+    "auth_source": {
+      "file": ".env",
+      "keys": ["HERMES_LANGFUSE_PUBLIC_KEY", "HERMES_LANGFUSE_SECRET_KEY"],
+      "values_in_manifest": false
+    }
+  },
+  "real_turn": {
+    "disposition": "executed",
+    "reason": "Real turn executed 2026-11-03 16:38 local under HERMES_HOME=/opt/hermes-agent-data/fleet-canary (session 20261103_163858_8e0e3d): 2 API calls, 1 read_file tool call, billing_mode subscription_included, estimated cost 0.0. Trace 18bf1624836a4dd2ac80e3d7ed630a55 verified by API and by read-only Postgres: 2 generations + 1 root span + 1 tool span, metadata allowlist only, 0 prompt/completion payloads. Schema enum has no 'observed' value; 'executed' is the frozen contract for a completed real turn.",
+    "provider": "openai-codex",
+    "model": "gpt-6.1-sol",
+    "model_source": "live provider catalog cache /opt/hermes-agent-data/provider_models_cache.json (openai-codex, fp 5a4dd7b13ab3af3d, at 1793721020)",
+    "api_mode": "codex_responses",
+    "fallback_providers": [],
+    "fallback_model": null,
+    "billing_mode_expected": "subscription_included",
+    "billing_mode_auto_accepted": false,
+    "model_calls_allowed_until_authorized": 2
+  },
+  "rollback": {
+    "scope": "isolated canary home only",
+    "steps": [
+      "stop f4_producer.py (PID file) — never touch vigia/default gateways",
+      "archive f4 window state + samples + spool copy under f4_archive/<window_id>/",
+      "leave Langfuse PROD traces (synthetic, session-scoped) untouched"
+    ]
+  }
+}

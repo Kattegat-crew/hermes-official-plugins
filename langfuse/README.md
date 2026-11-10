@@ -143,6 +143,36 @@ The active mode is recorded on every trace as `metadata.capture_mode`. `sanitize
 defense in depth, not a DLP guarantee. For personal sessions or shared Langfuse projects, prefer
 `metadata`.
 
+## Langfuse v2 REST compatibility (opt-in)
+
+The default transport remains the Langfuse SDK's current OTLP path. For an existing Langfuse v2
+server, explicitly set `HERMES_LANGFUSE_TRANSPORT=legacy`; unset it or set it to `otlp` to use the
+default path again. An unrecognized value disables tracing rather than guessing from the server URL.
+Restart Hermes after changing this setting.
+
+The legacy transport uses the installed SDK's low-level REST client and `/api/public/ingestion`;
+it does not initialize the SDK's high-level OTLP resource manager. This transport is always
+metadata-only, regardless of `HERMES_LANGFUSE_CAPTURE`: it omits prompts, completions, tool
+arguments/results, arbitrary metadata, free-form names, status messages, and cost details. It keeps
+bounded validated profile/platform/provider/model identifiers, trace/session/parent correlation,
+event timing and error levels, and only non-negative integer input/output/total token counts when
+present. Langfuse v2 does not receive newer `usageDetails` or `costDetails` fields. The event union
+and body-field allowlist are based on the [v2.95.11 ingestion schema](https://github.com/langfuse/langfuse/blob/v2.95.11/packages/shared/src/server/ingestion/types.ts).
+
+Delivery uses one process-wide daemon worker (one in-flight batch at a time), with a queue capped at
+128 events / 512 KiB; a full queue drops new events with a count-only warning rather than blocking a
+Hermes turn. A batch is at most 128 events / 512 KiB. The low-level HTTP client has a 1.5-second
+inactivity timeout and redirects disabled; each event batch has at most two adapter attempts, while
+SDK-internal retries/backoff are disabled. Partial-success responses retry only identified retryable
+events with their original IDs. Each flush, including an exit-time flush, waits at most 50 ms;
+multiple cached-client flushes can accumulate, so this is not a process-wide shutdown deadline.
+Queued events can be lost on a slow backend or abrupt process exit. The HTTP inactivity timeout
+is not a total request deadline: a slow-trickling body may occupy the single daemon worker, but cannot
+hold producer locks or spawn additional workers; the bounded queue then drops new events. This is a
+local transport option, not evidence that a live Langfuse v2 server accepted or displayed traces.
+Verify against the intended deployment with a separately authorized no-sensitive-content canary
+before relying on it.
+
 ## Disable or remove
 
 ```bash

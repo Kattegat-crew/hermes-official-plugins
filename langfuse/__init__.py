@@ -34,6 +34,18 @@ except Exception:  # pragma: no cover - fail-open when optional dep is missing
     Langfuse = None
     propagate_attributes = None
 
+try:
+    from .legacy_ingestion import LegacyIngestionClient, create_langfuse_api_client, flush_legacy_delivery
+except ImportError:  # pragma: no cover - imported as a flat plugin package by Hermes
+    try:
+        from langfuse_plugin.legacy_ingestion import (
+            LegacyIngestionClient, create_langfuse_api_client, flush_legacy_delivery,
+        )
+    except ImportError:
+        LegacyIngestionClient = None
+        create_langfuse_api_client = None
+        flush_legacy_delivery = None
+
 
 @dataclass
 class TraceState:
@@ -142,6 +154,24 @@ def _debug(message: str) -> None:
         logger.info("Langfuse tracing: %s", message)
 
 
+_TRANSPORT_MODES = ("otlp", "legacy")
+_warned_invalid_transport = False
+
+
+def _transport_mode() -> str:
+    """Select the explicit v2 REST opt-in; never infer compatibility from the endpoint."""
+    global _warned_invalid_transport
+    value = _env("HERMES_LANGFUSE_TRANSPORT").lower()
+    if not value:
+        return "otlp"
+    if value in _TRANSPORT_MODES:
+        return value
+    if not _warned_invalid_transport:
+        _warned_invalid_transport = True
+        logger.warning("Langfuse plugin: invalid HERMES_LANGFUSE_TRANSPORT; tracing is disabled")
+    return "invalid"
+
+
 @contextlib.contextmanager
 def _failsafe(label: str):
     """Swallow + debug-log any exception: telemetry must never block the agent turn."""
@@ -235,6 +265,8 @@ def _capture_content(value: Any, *, parse_json_strings: bool = False, tool_resul
     parsed first so a read_file payload can be collapsed to a preview keyed by
     the call's ``args``.
     """
+    if _transport_mode() == "legacy":
+        return None
     if _capture_mode() == "metadata":
         return _describe_content(value)
     if tool_result_of is not None:
@@ -311,7 +343,10 @@ def _get_langfuse() -> Optional[Langfuse]:
 
 def _build_client() -> Optional[Langfuse]:
     """Construct the SDK client from env, or None (with one warning) when it can't be."""
-    if Langfuse is None:
+    transport = _transport_mode()
+    if transport == "invalid":
+        return None
+    if transport == "otlp" and Langfuse is None:
         logger.warning(
             "Langfuse plugin is enabled but the langfuse SDK is unavailable; "
             "tracing is disabled. Reinstall it with `hermes plugins install langfuse --force`."
@@ -366,7 +401,7 @@ def _build_client() -> Optional[Langfuse]:
         value = _secret(f"HERMES_LANGFUSE_{name}") or _secret(f"LANGFUSE_{name}") or default
         if value:
             kwargs[key] = value
-    sample_rate = _secret("HERMES_LANGFUSE_SAMPLE_RATE")
+    sample_rate = _secret("HERMES_LANGFUSE_SAMPLE_RATE") if transport == "otlp" else ""
     if sample_rate:
         try:
             kwargs["sample_rate"] = float(sample_rate)
@@ -377,13 +412,23 @@ def _build_client() -> Optional[Langfuse]:
     # landed unattributed (hermes-agent#58322). Default only: an operator's OTEL_SERVICE_NAME or
     # service.name in OTEL_RESOURCE_ATTRIBUTES still wins. The SDK's TracerProvider reads it once at
     # construction, so it is set only for that call: children (terminal, MCP) must not inherit it.
-    default_service = "OTEL_SERVICE_NAME" not in os.environ and "service.name=" not in os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
+    default_service = transport == "otlp" and "OTEL_SERVICE_NAME" not in os.environ and "service.name=" not in os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
     if default_service:
         os.environ["OTEL_SERVICE_NAME"] = "hermes-agent"
     try:
+        if transport == "legacy":
+            if create_langfuse_api_client is None or LegacyIngestionClient is None:
+                logger.warning("Langfuse legacy REST client is unavailable; tracing is disabled")
+                return None
+            return LegacyIngestionClient(create_langfuse_api_client(
+                base_url=base_url, public_key=public_key, secret_key=secret_key,
+            ))
         return Langfuse(**kwargs)
     except Exception as exc:  # pragma: no cover - fail-open
-        logger.warning("Could not initialize Langfuse client: %s", exc)
+        if transport == "legacy":
+            logger.warning("Could not initialize Langfuse legacy REST client")
+        else:
+            logger.warning("Could not initialize Langfuse client: %s", exc)
         return None
     finally:
         if default_service:
@@ -743,7 +788,8 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     metadata = {
         "source": "hermes", "task_id": task_id, "turn_id": turn_id, "api_request_id": api_request_id,
         "platform": platform, "provider": provider, "model": model, "api_mode": api_mode,
-        "capture_mode": _capture_mode(), "profile": profile, **kanban,
+        "capture_mode": "metadata" if getattr(client, "is_legacy_ingestion", False) else _capture_mode(),
+        "profile": profile, **kanban,
     }
     # session_id must be in trace_context for Langfuse session grouping.
     trace_ctx: dict[str, Any] = {"trace_id": trace_id, **({"session_id": session_id} if session_id else {})}
@@ -847,8 +893,11 @@ def _finalize_all_traces() -> None:
         # here raises UnscopedSecretError under multiplex and would skip every flush). Flush only
         # the clients that settled during the run — the launch profile's slot plus one per home.
         for client in (_LANGFUSE_CLIENT, *_LANGFUSE_CLIENT_BY_HOME.values()):
-            if client is not None and client is not _INIT_FAILED:
+            if (client is not None and client is not _INIT_FAILED
+                    and not getattr(client, "is_legacy_ingestion", False)):
                 _flush(client)
+    if flush_legacy_delivery is not None:
+        flush_legacy_delivery()
 
 
 def _flush(client: Any) -> None:
@@ -885,6 +934,8 @@ def _finish_trace(task_key: str, *, output: Any = None) -> None:
                 with _failsafe(label):
                     getattr(state.root_span, method)(output=final_output)
         _end_root(state, "root end()")
+        if getattr(client, "is_legacy_ingestion", False):
+            _flush(client)
     except Exception as exc:  # pragma: no cover - fail-open
         _debug(f"finish trace failed: {exc}")
         with contextlib.suppress(Exception):  # last-chance end so the root still exports
