@@ -40,7 +40,7 @@ _FINISH_WAIT_SECONDS = 0.05
 # The worker's idle wake doubles as the expiry-sweep cadence (02-design.md §3: ~10 min).
 _IDLE_WAKE_SECONDS = 600.0
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:/@+-]{1,128}$")
-_SAFE_NAME = re.compile(r"^[A-Za-z0-9_.:/@+ -]{1,80}$")
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_.:/@+ \[\]-]{1,80}$")
 _SECRET_PREFIX = re.compile(r"(?i)^(?:pk-lf-|sk-lf-|sk-|pk_|sk_|gh[pousr]_|github_pat_|xox[baprs]-|bearer\s)")
 _METADATA_KEYS = frozenset({
     "source", "platform", "provider", "model", "api_mode", "profile", "env", "turn_id",
@@ -69,6 +69,15 @@ def _safe_metadata(value: Any) -> dict[str, str]:
         key: safe for key, raw in value.items()
         if key in _METADATA_KEYS and (safe := _identifier(raw)) is not None
     }
+
+
+def _safe_label(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if _SAFE_NAME.fullmatch(value) and not _SECRET_PREFIX.search(value):
+        return value
+    return None
 
 
 def _safe_usage(value: Any) -> dict[str, int] | None:
@@ -287,6 +296,11 @@ class LegacyIngestionClient:
             trace_body["metadata"] = safe_metadata
         if safe_tags:
             trace_body["tags"] = safe_tags
+        safe_name = _safe_label(name)
+        trace_body["name"] = safe_name or "Hermes turn"
+        profile = safe_metadata.get("profile")
+        if profile:
+            trace_body["userId"] = profile
         self._enqueue("trace-create", trace_body)
         return self._observation(trace_id, None, as_type, metadata=safe_metadata,
                                  model=model, created=created, root=True, name=name)
@@ -301,8 +315,7 @@ class LegacyIngestionClient:
         default_name = "Hermes turn" if root else {
             "generation": "Hermes generation", "tool": "Hermes tool", "subagent": "Hermes subagent",
         }.get(as_type, "Hermes observation")
-        safe_name = (name.strip() if isinstance(name, str) and _SAFE_NAME.fullmatch(name.strip())
-                     and not _SECRET_PREFIX.search(name) else None)
+        safe_name = _safe_label(name)
         body: dict[str, Any] = {
             "id": observation_id, "traceId": trace_id, "name": safe_name or default_name,
             "startTime": created or _timestamp(),

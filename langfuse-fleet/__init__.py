@@ -785,6 +785,9 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     # The profile the turn runs FOR (ctx.profile_name follows the routed home under multiplexing,
     # not the launch profile), so traces from several profiles in one project can be told apart.
     profile = _PLUGIN_CTX.profile_name if _PLUGIN_CTX is not None else ""
+    # The old bundled plugin named traces ``Hermes turn [profile]``; the default profile is Ragnar.
+    display = "ragnar" if profile == "default" else (profile or "unknown")
+    trace_name = f"Hermes turn [{display}]"
     # A dispatcher-spawned kanban worker gets its board task / run id in its env, so its traces can
     # be joined back to the card without guessing from session names. Omitted outside kanban.
     kanban = {k: v for k, v in (("kanban_task_id", _env("HERMES_KANBAN_TASK")),
@@ -808,14 +811,14 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     # a later hook on another worker thread, so every turn logged "Failed to detach context" (hermes-agent#95057). A span
     # created inside propagate_attributes still carries its session / trace name / tags.
     def open_root():
-        kwargs: dict[str, Any] = {"trace_context": trace_ctx, "name": "Hermes turn", "as_type": "chain",
+        kwargs: dict[str, Any] = {"trace_context": trace_ctx, "name": trace_name, "as_type": "chain",
                                   "input": trace_input, "metadata": metadata}
         if getattr(client, "is_legacy_ingestion", False):
             kwargs["tags"] = root_tags
         return client.start_observation(**kwargs)
 
     root_span = None
-    propagated = {"session_id": session_id or task_key, "trace_name": "Hermes turn", "tags": root_tags}
+    propagated = {"session_id": session_id or task_key, "trace_name": trace_name, "tags": root_tags}
     if profile or kanban:
         propagated["metadata"] = {**({"profile": profile} if profile else {}), **kanban}
     if propagate_attributes is not None:

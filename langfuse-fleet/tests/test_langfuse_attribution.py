@@ -110,6 +110,12 @@ def test_kanban_worker_trace_names_its_board_task_and_run(traced, monkeypatch):
     assert propagated[0]["metadata"] == {"profile": "default", "kanban_task_id": "t_8f2c", "kanban_run_id": "42"}
 
 
+def test_root_trace_name_includes_profile(traced):
+    mod, _, propagated, _ = traced
+    _open_turn(mod)
+    assert propagated[0]["trace_name"] == "Hermes turn [ragnar]"
+
+
 # Platform / trigger / cron-job tags (hermes-agent#102755, #74930, #88502).
 
 def test_interactive_turn_is_tagged_with_platform_and_trigger(traced, monkeypatch):
