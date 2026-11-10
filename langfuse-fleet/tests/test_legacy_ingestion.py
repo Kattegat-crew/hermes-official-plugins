@@ -323,3 +323,19 @@ def test_legacy_tool_span_keeps_name_and_skill_metadata():
                 if e["type"] == "span-create" and e["body"].get("name") == "Tool: skill_view")
     assert span["name"] == "Tool: skill_view"
     assert span["metadata"] == {"tool_name": "skill_view", "tool_call_id": "call-1", "skill": "hermes-cron-ops"}
+
+
+def test_legacy_trace_keeps_profile_name_and_user_id():
+    legacy = _legacy_module()
+    api = _API()
+    client = legacy.LegacyIngestionClient(api)
+    trace_id = client.create_trace_id(seed="session-token::turn-token")
+    root = client.start_observation(
+        trace_context={"trace_id": trace_id, "session_id": "session-token"},
+        name="Hermes turn [ragnar]", as_type="chain", metadata={"profile": "default"})
+    root.end()
+    client.flush()
+    _wait_for_batches(api, 1)
+    trace = _events(api)[0]["body"]
+    assert trace["name"] == "Hermes turn [ragnar]"
+    assert trace["userId"] == "default"
