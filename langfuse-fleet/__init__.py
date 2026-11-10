@@ -83,6 +83,9 @@ class TraceState:
     # fan-out until the next one, so tool-loop turns would re-emit advisors.
     moa_emitted: set = field(default_factory=set)
     last_updated_at: float = field(default_factory=time.time)
+    # Last assistant output seen by on_post_llm_call; session_finalize may close
+    # the trace without an output argument, so the trace-update needs this.
+    last_output: Any = None
     # propagate_attributes() kwargs the root was opened with, re-applied to every child.
     propagated: dict[str, Any] = field(default_factory=dict)
 
@@ -930,7 +933,7 @@ def _finish_trace(task_key: str, *, output: Any = None) -> None:
 
     try:
         _end_children(state)
-        final_output = output
+        final_output = output if output is not None else getattr(state, "last_output", None)
         if state.turn_tool_calls:
             final_output = dict(output) if isinstance(output, dict) else {"content": output}
             final_output["tool_calls"] = list(state.turn_tool_calls)
@@ -1116,6 +1119,7 @@ def on_post_llm_call(*, task_id: str = "", session_id: str = "", provider: str =
 
     if output.get("tool_calls"):
         state.turn_tool_calls.extend(output["tool_calls"])
+    state.last_output = output
 
     # post_api_request's ``response`` is a sanitized dict with no ``.usage``;
     # gate on the attribute so the usage-dict fallback is actually reached.
@@ -1281,7 +1285,8 @@ def on_session_finalize(*, session_id: str = "", reason: str = "", **_: Any) -> 
     with _STATE_LOCK:
         keys = [k for k in _TRACE_STATE if not session_id or k == session_id or any(f in k for f in fragments)]
     for key in keys:
-        _finish_trace(key)
+        state = _TRACE_STATE.get(key)
+        _finish_trace(key, output=getattr(state, "last_output", None) if state else None)
 
     # /new, expiry and other session boundaries must not wait for the backend.
     # The SDK keeps exporting ended spans in its bounded background queue.
